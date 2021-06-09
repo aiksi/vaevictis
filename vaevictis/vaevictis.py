@@ -4,7 +4,7 @@ import tensorflow.keras.backend as K
 import numpy as np
 from tsne_helper_njit import compute_transition_probability
 from cense_helper_njit import dist_to_knn as cense_dtk, remove_asym
-from umap_helper_njit import dist_to_knn as umap_dtk, find_ab_params, smooth_knn_dist, compute_membership_strengths, simplicial_graph_from_dist
+from umap_helper_njit import dist_to_knn as umap_dtk, find_ab_params, smooth_knn_dist, compute_membership_strengths, simplicial_graph_from_dist, euclidean_embedding
 from ivis_helper import input_compute, pn_loss_g, euclidean_distance, cosine_distance
 from knn_annoy import build_annoy_index, extract_knn
 from tensorflow.keras.callbacks import EarlyStopping
@@ -25,29 +25,26 @@ eta = tf.constant(1e-4, dtype=tf.float64)
 EPS = 1e-7
 
 @tf.function
-def masked_log(x): #applies log to matrix with elements <= 0
-    z = tf.zeros_like(x)
-    o = tf.ones_like(x)
-    mask = tf.where(x>1e-7, x=o, y=z) #1 if element is zero, 0 if not
-    return tf.math.log(x + tf.math.add(x, mask))
+def masked_log(x): #applies log to matrix with elements <= 0 while preserving ordering
+    return tf.math.log(tf.clip_by_value(x, EPS, 100.))
 
-@tf.function
-def compute_cross_entropy(
-    probabilities_graph, probabilities_distance, EPS=1e-7, repulsion_strength=1.0
-):
-    # cross entropy
-    attraction_term = -probabilities_graph * tf.math.log(
-        tf.clip_by_value(probabilities_distance, EPS, 1.0)
-    )
-    repellant_term = (
-        -(1.0 - probabilities_graph)
-        * tf.math.log(tf.clip_by_value(1.0 - probabilities_distance, EPS, 1.0))
-        * repulsion_strength
-    )
+# @tf.function
+# def compute_cross_entropy(
+#     probabilities_graph, probabilities_distance, EPS=1e-7, repulsion_strength=1.0
+# ):
+#     # cross entropy
+#     attraction_term = -probabilities_graph * tf.math.log(
+#         tf.clip_by_value(probabilities_distance, EPS, 1.0)
+#     )
+#     repellant_term = (
+#         -(1.0 - probabilities_graph)
+#         * tf.math.log(tf.clip_by_value(1.0 - probabilities_distance, EPS, 1.0))
+#         * repulsion_strength
+#     )
 
-    # balance the expected losses between atrraction and repel
-    CE = attraction_term + repellant_term
-    return attraction_term, repellant_term, CE
+#     # balance the expected losses between atrraction and repel
+#     CE = attraction_term + repellant_term
+#     return attraction_term, repellant_term, CE
     
 def nll(y_true, y_pred):
     """ loss """
@@ -141,66 +138,58 @@ def cense_reg_builder(ww, kneighs):
     
     return null_reg if ww[4] <= 0 else cense_reg 
 
-def umap_reg_builder(ww):
-    def umap_reg(x, z, a, b):
+def umap_reg_builder(ww, a, b):
+    def umap_reg(x, z):
         sum_x = tf.reduce_sum(tf.square(x), 1)
         dist = tf.constant(-2.0, tf.float64) * tf.matmul(x,
                                                          x,
                                                          transpose_b=True) + tf.reshape(sum_x, [-1, 1]) + sum_x
-        tf.print("dist :", dist, summarize=-1)
-        # # ipdb.set_trace()
+        n = tf.shape(dist)[0]*tf.shape(dist)[1]
+        # tf.print("dist :", dist, summarize=-1)
         # dist_and_knn = tf.numpy_function(umap_dtk, [dist], tf.float64)
         # k = tf.shape(dist)[0] # k is batch size
         # tf.print("dist_knn: ", dist_and_knn, summarize=-1)
         # dist = dist_and_knn[:k,:] 
         # knn = dist_and_knn[k:,:]
         
-        # # ipdb.set_trace()
         # rhos_and_sigmas = tf.numpy_function(smooth_knn_dist, [dist], tf.float64)
         # tf.print("rhos_sigmas: ", rhos_and_sigmas, summarize=-1)
         # rhos = rhos_and_sigmas[0,:]
         # sigmas = rhos_and_sigmas[1,:]
 
-        # # ipdb.set_trace()
         # uwg = tf.numpy_function(compute_membership_strengths, [knn, dist, sigmas, rhos], tf.float64)
         # tf.print("Graph: ", uwg, summarize=-1)
 
-        # ipdb.set_trace()
         highD_proba = tf.numpy_function(simplicial_graph_from_dist, [dist], tf.float64)
-        tf.print("highD_proba :", highD_proba, summarize=-1)
+        # tf.print("highD_proba :", highD_proba, summarize=-1)
         
-        # ipdb.set_trace()
         sum_z = tf.reduce_sum(tf.square(z), 1)
         dist_z = tf.constant(-2.0, tf.float64) * tf.matmul(z,
-                                                           z,
-                                                           transpose_b=True) + tf.reshape(sum_z, [-1, 1]) + sum_z
+                                                            z,
+                                                            transpose_b=True) + tf.reshape(sum_z, [-1, 1]) + sum_z
         
-        lowD_proba = tf.math.reciprocal(tf.constant(1, tf.float64)
-                                        + tf.multiply(a, tf.math.pow(dist_z, b)))
-        tf.print("lowD_proba :", lowD_proba, summarize=-1)
-        
-        # clipped_highD = tf.clip_by_value(highD_proba, EPS, 1.0)
-        # clipped_lowD = tf.clip_by_value(lowD_proba, EPS, 1.0)
-        
-        # attraction = tf.reduce_sum(
-        #     tf.subtract(tf.multiply(highD_proba, masked_log(highD_proba)),
-        #                 tf.multiply(highD_proba, masked_log(lowD_proba))))
-        
-        # negH = tf.subtract(tf.constant(1, tf.float64), highD_proba)
-        # negL = tf.subtract(tf.constant(1, tf.float64), lowD_proba)
-        
-        # repellant = tf.reduce_sum(
-        #     tf.subtract(tf.multiply(negH, masked_log(negH)),
-        #                 tf.multiply(negH, masked_log(negL))))
-        
-        # cross_entropy = repellant + attraction
+        lowD_proba = tf.numpy_function(euclidean_embedding, [dist_z, a, b], tf.float64)
+
+        # tf.print("lowD_proba :", lowD_proba, summarize=-1)
                 
-        cross_entropy = compute_cross_entropy(highD_proba, lowD_proba)
-        tf.print("crossentropy :", cross_entropy)
+        attraction = tf.reduce_sum(
+            tf.subtract(tf.multiply(highD_proba, masked_log(highD_proba)),
+                        tf.multiply(highD_proba, masked_log(lowD_proba))))
         
-        return tf.reduce_sum(cross_entropy)
+        negH = tf.subtract(tf.constant(1, tf.float64), highD_proba)
+        negL = tf.subtract(tf.constant(1, tf.float64), lowD_proba)
+        
+        repellant = tf.reduce_sum(
+            tf.subtract(tf.multiply(negH, masked_log(negH)),
+                        tf.multiply(negH, masked_log(negL))))
+        
+        cross_entropy = (repellant + attraction) / tf.cast(n, tf.float64)
+                        
+        # tf.print("crossentropy :", cross_entropy)
+        
+        return tf.reduce_mean(cross_entropy)
     
-    def null_reg(x):
+    def null_reg(x,z):
         return tf.cast(0., tf.float64)
 
     return null_reg if ww[5] <= 0 else umap_reg
@@ -301,10 +290,8 @@ class Vaevictis(tf.keras.Model):
         self.sampling = Sampling()
         self.tsne_reg = tsne_reg_builder(self.ww, self.perplexity, self.latent_dim)
         self.cense_reg = cense_reg_builder(self.ww, self.kneighs)
-        self.umap_reg = umap_reg_builder(self.ww)
         self.a, self.b = find_ab_params()
-        self.a = tf.constant(self.a, tf.float64)
-        self.b = tf.constant(self.b, tf.float64)
+        self.umap_reg = umap_reg_builder(self.ww, self.a, self.b)
         self.nll = nll_builder(self.ww)
 
     def call(self, inputs, training=None):
@@ -313,9 +300,9 @@ class Vaevictis(tf.keras.Model):
         pos, _ = self.encoder(inputs[1], training=training)
         neg, _ = self.encoder(inputs[2], training=training)
         
-        # pnl = pn_loss_g((z_mean, pos, neg), self.distance, self.margin)
-        # # tf.print("pn loss:", pnl)
-        # self.add_loss(self.ww[1] * pnl)
+        pnl = pn_loss_g((z_mean, pos, neg), self.distance, self.margin)
+        # tf.print("pn loss:", pnl)
+        self.add_loss(self.ww[1] * pnl)
         
         b = self.tsne_reg(inputs[0], z_mean)
         # tf.print("tsne loss:", b)
@@ -331,7 +318,7 @@ class Vaevictis(tf.keras.Model):
         # tf.print("cense loss:", cenl)
         self.add_loss(cenl)
         
-        umap = self.umap_reg(inputs[0], z_mean, self.a, self.b)
+        umap = self.umap_reg(inputs[0], z_mean)
         self.add_loss(self.ww[5] * umap)
         
         z = self.sampling((z_mean, z_log_var))
@@ -363,7 +350,7 @@ class Vaevictis(tf.keras.Model):
             return self.encoder(data)[0].numpy()
 
         return (predict)
-
+    
 
 def dimred(x_train, dim=2, vsplit=0.1, enc_shape=[128, 128, 128], dec_shape=[128, 128, 128],
            perplexity=10., batch_size=512, epochs=100, patience=0, ivis_pretrain=0, ww=[10., 10., 1., 1., 1., 1.],
@@ -398,8 +385,8 @@ def dimred(x_train, dim=2, vsplit=0.1, enc_shape=[128, 128, 128], dec_shape=[128
     vae : whole vaevictis model
     """
 
-    # triplets = input_compute(x_train, k, metric, knn)
-    triplets = [x_train, x_train, x_train]
+    triplets = input_compute(x_train, k, metric, knn)
+    # triplets = [x_train, x_train, x_train]
     # tf.print("triplets :", triplets)
 
     optimizer = tf.keras.optimizers.Adam()
@@ -415,7 +402,6 @@ def dimred(x_train, dim=2, vsplit=0.1, enc_shape=[128, 128, 128], dec_shape=[128
         pre_weight = vae.get_weights()
 
     vae = Vaevictis(x_train.shape[1], enc_shape, dec_shape, dim, perplexity, metric, margin, cense_kneighs, ww)
-
     nll_f = nll_builder(ww)
     vae.compile(optimizer, loss=nll_f)
 
@@ -428,7 +414,7 @@ def dimred(x_train, dim=2, vsplit=0.1, enc_shape=[128, 128, 128], dec_shape=[128
     vae.fit(triplets, triplets[0], batch_size=batch_size, epochs=epochs, callbacks=[es], validation_split=vsplit,
             shuffle=True)
 
-    # train_dataset = tf.data.Dataset.from_tensor_slices(triplets) ## eager debugging
+    ## eager debugging
     # @tf.function
     # def train_one_step(m1,optimizer,x):
     #     with tf.GradientTape() as tape:
@@ -436,24 +422,37 @@ def dimred(x_train, dim=2, vsplit=0.1, enc_shape=[128, 128, 128], dec_shape=[128
     #         reconstructed = m1(x)
     #         # Compute reconstruction loss
     #         loss = nll(x, reconstructed)
-    # 
+    
     #         loss += sum(m1.losses)  # Add KLD regularization loss
-    # 
+    #         # tf.print("batch_data :", x, summarize=-1)
+    #         # tf.print("pred :", reconstructed, summarize=-1)
+    
+    #     tf.print("loss :", loss)
+    #     # tf.print("weights :", m1.trainable_weights, summarize=-1)
     #     grads = tape.gradient(loss, m1.trainable_weights)
+    #     # for grad in grads:
+    #     # tf.print("grads :", grads[1], summarize=-1)
     #     optimizer.apply_gradients(zip(grads, m1.trainable_weights))
     #     return loss
-    #
-    #
-    #
+    
+    
+    
     # # # Iterate over epochs.
     # def train():
     #     loss=0.
+    #     formatted_data = []
+    #     for dataset in triplets:
+    #         slices = tf.data.Dataset.from_tensor_slices(dataset)
+    #         slices = slices.batch(batch_size)
+    #         formatted_data.append(list(slices.as_numpy_iterator()))
+    #     anc, pos, neg = formatted_data
     #     for epoch in range(epochs):
     #         print('Start of epoch %d' % (epoch,))
-    #         for  x_batch_train in train_dataset.batch(128):
-    #             loss=train_one_step(vae,optimizer,x_batch_train)
+    #         for  b, x_batch_train in enumerate(anc):
+    #             print('\t Batch', b)
+    #             loss=train_one_step(vae,optimizer,[x_batch_train, pos[b], neg[b]])
     #     return loss
-    # 
+    
     # loss=train()
 
     inputs=layers.Input(shape=(x_train.shape[1],))
@@ -504,31 +503,31 @@ def cluster_sampling(data, n_clusters, n_samples):
   return data[sample.astype(int)], memberships, kmeans
 
 
-data = np.loadtxt("../../MMDResNet/data/source_pIC_orig.csv", delimiter=',')[:50,:]
-cl = cluster_sampling(data, n_clusters=1, n_samples=50)
-sampled_data = cl[0]
-lab = cl[2].predict(sampled_data)
+# data = np.loadtxt("../../MMDResNet/data/source_pIC_orig.csv", delimiter=',')[:50,:]
+# cl = cluster_sampling(data, n_clusters=1, n_samples=12)
+# sampled_data = cl[0]
+# lab = cl[2].predict(sampled_data)
 # dt = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 # # ipdb.set_trace()
 # build_annoy_index(sampled_data, "index/ind_" + dt, metric="euclidean", build_index_on_disk=True)
 # # ipdb.set_trace()
 # knn_matrix = extract_knn(data, "index/ind_" + dt, metric="euclidean")
 # # ipdb.set_trace()
-vae = dimred(sampled_data,
-              dim=2,
-              vsplit=0.1,
-              enc_shape=[128, 128, 128], 
-              dec_shape=[128, 128, 128],
-              perplexity=10., 
-              batch_size=6, 
-              epochs=1, 
-              patience=8, 
-              ww=[0., 0., 0., 0., 0., 2.],
-              metric="euclidean", 
-              margin=1.,
-              k=6,
-              cense_kneighs = 4,
-              knn=None)
+# vae = dimred(sampled_data,
+#               dim=2,
+#               vsplit=0.1,
+#               enc_shape=[128,128,128], 
+#               dec_shape=[128,128,128],
+#               perplexity=10., 
+#               batch_size=6, 
+#               epochs=10, 
+#               patience=8, 
+#               ww=[1., 1., 1., 1., 1., 2.],
+#               metric="euclidean", 
+#               margin=1.,
+#               k=6,
+#               cense_kneighs = 4,
+#               knn=None)
 
 # data = np.loadtxt("../../MMDResNet/data/source_pIC_orig.csv", delimiter=',')
 # cl = cluster_sampling(data, n_clusters=15, n_samples=500)
@@ -541,9 +540,9 @@ vae = dimred(sampled_data,
 #               dec_shape=[128, 128, 128],
 #               perplexity=10., 
 #               batch_size=256, 
-#               epochs=100, 
+#               epochs=35, 
 #               patience=10, 
-#               ww=[0., 0., 5., 1., 0., 2.],
+#               ww=[0., 0., 5., 1., 0., 10.],
 #               metric="euclidean", 
 #               margin=1.,
 #               k=16,

@@ -127,3 +127,21 @@ def simplicial_graph_from_dist(dist) -> np.float64:
     G = compute_membership_strengths(dist, knn, rhos, sigmas)
     
     return G
+
+
+@jit(nopython = True)
+def euclidean_embedding(dist, a, b) -> np.float64:
+    
+    emb = np.reciprocal(1 + a*np.power(dist, b))
+    
+    return emb
+
+
+
+
+
+
+
+
+
+
