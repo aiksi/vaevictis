@@ -168,7 +168,15 @@ def umap_reg_builder(ww, a, b):
                                                             z,
                                                             transpose_b=True) + tf.reshape(sum_z, [-1, 1]) + sum_z
         
-        lowD_proba = tf.numpy_function(euclidean_embedding, [dist_z, a, b], tf.float64)
+        # lowD_proba = tf.numpy_function(euclidean_embedding, [dist_z, a, b], tf.float64)
+        
+        # lowD_proba = tf.math.reciprocal(tf.constant(1, tf.float64)
+        #                                 + tf.multiply(tf.constant(1.0, tf.float64), 
+        #                                               tf.math.exp(tf.multiply(tf.constant(2.0, tf.float64),
+        #                                                                       tf.math.log(dist_z)))))
+        
+        lowD_proba = tf.math.reciprocal(tf.constant(1, tf.float64)
+                                        + tf.multiply(a, tf.math.pow(dist_z, tf.math.round(b))))
 
         # tf.print("lowD_proba :", lowD_proba, summarize=-1)
                 
@@ -291,6 +299,8 @@ class Vaevictis(tf.keras.Model):
         self.tsne_reg = tsne_reg_builder(self.ww, self.perplexity, self.latent_dim)
         self.cense_reg = cense_reg_builder(self.ww, self.kneighs)
         self.a, self.b = find_ab_params()
+        self.a = tf.constant(self.a, tf.float64)
+        self.b = tf.constant(self.b, tf.float64)
         self.umap_reg = umap_reg_builder(self.ww, self.a, self.b)
         self.nll = nll_builder(self.ww)
 
@@ -385,8 +395,8 @@ def dimred(x_train, dim=2, vsplit=0.1, enc_shape=[128, 128, 128], dec_shape=[128
     vae : whole vaevictis model
     """
 
-    triplets = input_compute(x_train, k, metric, knn)
-    # triplets = [x_train, x_train, x_train]
+    # triplets = input_compute(x_train, k, metric, knn)
+    triplets = [x_train, x_train, x_train]
     # tf.print("triplets :", triplets)
 
     optimizer = tf.keras.optimizers.Adam()
@@ -414,7 +424,7 @@ def dimred(x_train, dim=2, vsplit=0.1, enc_shape=[128, 128, 128], dec_shape=[128
     vae.fit(triplets, triplets[0], batch_size=batch_size, epochs=epochs, callbacks=[es], validation_split=vsplit,
             shuffle=True)
 
-    ## eager debugging
+    # # eager debugging
     # @tf.function
     # def train_one_step(m1,optimizer,x):
     #     with tf.GradientTape() as tape:
@@ -431,7 +441,7 @@ def dimred(x_train, dim=2, vsplit=0.1, enc_shape=[128, 128, 128], dec_shape=[128
     #     # tf.print("weights :", m1.trainable_weights, summarize=-1)
     #     grads = tape.gradient(loss, m1.trainable_weights)
     #     # for grad in grads:
-    #     # tf.print("grads :", grads[1], summarize=-1)
+    #     tf.print("grads :", grads, summarize=-1)
     #     optimizer.apply_gradients(zip(grads, m1.trainable_weights))
     #     return loss
     
@@ -503,10 +513,10 @@ def cluster_sampling(data, n_clusters, n_samples):
   return data[sample.astype(int)], memberships, kmeans
 
 
-# data = np.loadtxt("../../MMDResNet/data/source_pIC_orig.csv", delimiter=',')[:50,:]
-# cl = cluster_sampling(data, n_clusters=1, n_samples=12)
-# sampled_data = cl[0]
-# lab = cl[2].predict(sampled_data)
+data = np.loadtxt("../../MMDResNet/data/source_pIC_orig.csv", delimiter=',')[:50,:]
+cl = cluster_sampling(data, n_clusters=1, n_samples=12)
+sampled_data = cl[0]
+lab = cl[2].predict(sampled_data)
 # dt = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 # # ipdb.set_trace()
 # build_annoy_index(sampled_data, "index/ind_" + dt, metric="euclidean", build_index_on_disk=True)
@@ -516,11 +526,11 @@ def cluster_sampling(data, n_clusters, n_samples):
 # vae = dimred(sampled_data,
 #               dim=2,
 #               vsplit=0.1,
-#               enc_shape=[128,128,128], 
-#               dec_shape=[128,128,128],
+#               enc_shape=[16,16], 
+#               dec_shape=[16,16],
 #               perplexity=10., 
 #               batch_size=6, 
-#               epochs=10, 
+#               epochs=2, 
 #               patience=8, 
 #               ww=[1., 1., 1., 1., 1., 2.],
 #               metric="euclidean", 
@@ -529,33 +539,33 @@ def cluster_sampling(data, n_clusters, n_samples):
 #               cense_kneighs = 4,
 #               knn=None)
 
-# data = np.loadtxt("../../MMDResNet/data/source_pIC_orig.csv", delimiter=',')
-# cl = cluster_sampling(data, n_clusters=15, n_samples=500)
-# sampled_data = cl[0]
-# lab = cl[2].predict(sampled_data)
-# vae = dimred(sampled_data,
-#               dim=2,
-#               vsplit=0.1,
-#               enc_shape=[128, 128, 128], 
-#               dec_shape=[128, 128, 128],
-#               perplexity=10., 
-#               batch_size=256, 
-#               epochs=35, 
-#               patience=10, 
-#               ww=[0., 0., 5., 1., 0., 10.],
-#               metric="euclidean", 
-#               margin=1.,
-#               k=16,
-#               cense_kneighs = 8,
-#               knn=None)
+data = np.loadtxt("../../MMDResNet/data/source_pIC_orig.csv", delimiter=',')
+cl = cluster_sampling(data, n_clusters=15, n_samples=500)
+sampled_data = cl[0]
+lab = cl[2].predict(sampled_data)
+vae = dimred(sampled_data,
+              dim=2,
+              vsplit=0.1,
+              enc_shape=[128, 128, 128], 
+              dec_shape=[128, 128, 128],
+              perplexity=10., 
+              batch_size=256, 
+              epochs=35, 
+              patience=10, 
+              ww=[0., 0., 5., 1., 0., 10.],
+              metric="euclidean", 
+              margin=1.,
+              k=16,
+              cense_kneighs = 8,
+              knn=None)
 
-# layout=vae[0]
-# pred=vae[1]
+layout=vae[0]
+pred=vae[1]
 
-# fig1 = plt.figure(figsize=(8,8), dpi=320)
-# plt.scatter(layout[:,0], layout[:,1], c=lab, cmap='viridis', s=0.2)
+fig1 = plt.figure(figsize=(8,8), dpi=320)
+plt.scatter(layout[:,0], layout[:,1], c=lab, cmap='viridis', s=0.2)
 
-# new = pred(data)
-# newl = cl[2].predict(data)
-# fig2 = plt.figure(figsize=(8,8), dpi=320)
-# plt.scatter(new[:,0], new[:,1], c=newl, cmap='viridis', s=0.2)
+new = pred(data)
+newl = cl[2].predict(data)
+fig2 = plt.figure(figsize=(8,8), dpi=320)
+plt.scatter(new[:,0], new[:,1], c=newl, cmap='viridis', s=0.2)
