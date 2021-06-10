@@ -8,6 +8,9 @@ MAX_VAL = np.log(sys.float_info.max) / 2.0
 
 np.random.seed(0)
 
+from tensorflow.keras import backend as K
+EPS = 2*K.epsilon()
+
 def find_ab_params(spread = 1., min_dist = 0.1) -> np.float64:
     def curve(x, a, b):
         return 1.0 / (1.0 + a * x ** (2 * b))
@@ -24,9 +27,9 @@ def dist_to_knn(dist) -> np.float64:
     k = dist.shape[0]
     newdist_and_knn = np.zeros((2*k,k))
     
-    for i,d in enumerate(dist):
-        newdist_and_knn[i,:] = d # not sorting dists for umap
-        ids = np.argsort(d)
+    for i in range(k):
+        newdist_and_knn[i,:] = dist[i,:] # not sorting dists for umap
+        ids = np.argsort(dist[i,:])
         newdist_and_knn[k+i,:] = ids
 
     return newdist_and_knn 
@@ -45,12 +48,12 @@ def smooth_knn_dist(dist, max_iter=50, tol=1e-4) -> np.float64:
         mid = 1.0
         
         cur_d = dist[i,:]
-        non_zero_d = cur_d[cur_d > 1e-7]
+        non_zero_d = cur_d[cur_d > EPS]
         rho_i = np.min(non_zero_d)
         rhos[i] = rho_i
         
         corr_d = cur_d - rho_i # d(xi, xij) - pi
-        corr_d = corr_d * (corr_d > 1e-7) # max(d(xi, xij) - pi, 0), avoid floating point mistakes
+        corr_d = corr_d * (corr_d > EPS) # max(d(xi, xij) - pi, 0), avoid floating point mistakes
         
         # Binary search for sigma_i
         S_i = np.sum(np.exp(-corr_d/mid))
@@ -98,10 +101,10 @@ def compute_membership_strengths(knn_dists, knn_mat, rhos, sigmas, mix_ratio=1.)
                 adjacency[i,n] = 1 #equivalent to setting everything except current point to 1 if kneighs = batch_size
         
         for j in range(n_neighbors):
-            if(adjacency[i,j] > 0):
+            if(adjacency[i,j] > EPS):
                 if not knn_mat[i,j] == i: # point must not be similar to itself                
                     corr_d = knn_dists[i,j] - rhos[i]
-                    corr_d = corr_d * (corr_d > 1e-7)
+                    corr_d = corr_d * (corr_d > EPS)
                     
                     adjacency[i,j] = np.exp(-(corr_d / sigmas[i]))
                     
