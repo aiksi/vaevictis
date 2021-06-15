@@ -4,7 +4,7 @@ import sys
 from datetime import datetime
 
 
-from knn_annoy import build_annoy_index, extract_knn
+from .knn_annoy import build_annoy_index, extract_knn
 import tensorflow as tf
 import tensorflow.keras.backend as K
 
@@ -18,7 +18,6 @@ def input_compute(x,k=16,metric="euclidean",knn_matrix=None): #x représente un 
     build_annoy_index(x,"ind",metric=metric,build_index_on_disk=True)
     knn_matrix = extract_knn(x,"ind",metric=metric)
 
-  print("knn_mat :", knn_matrix)  
   positive = np.empty(np.shape(x))
   negative = np.empty(np.shape(x))
 
