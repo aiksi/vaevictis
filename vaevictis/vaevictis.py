@@ -7,7 +7,7 @@ from .cense_helper_njit import dist_to_knn as cense_dtk, remove_asym
 from .umap_helper_njit import dist_to_knn as umap_dtk, find_ab_params, smooth_knn_dist, compute_membership_strengths, simplicial_graph_from_dist, euclidean_embedding
 from .ivis_helper import input_compute, pn_loss_g, euclidean_distance, cosine_distance
 from .knn_annoy import build_annoy_index, extract_knn
-from .tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.callbacks import EarlyStopping
 import os
 import json
 import ipdb
