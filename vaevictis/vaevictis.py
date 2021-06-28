@@ -14,6 +14,7 @@ import ipdb
 from datetime import datetime
 
 from sklearn.cluster import KMeans
+from sklearn.neighbors import NearestNeighbors
 import matplotlib.pyplot as plt
 
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
@@ -55,13 +56,12 @@ def nll(y_true, y_pred):
 def nll_builder(ww):
     def nll(y_true, y_pred):
         """ loss """
-
-        return ww[2] * tf.reduce_mean((y_true - y_pred) ** 2)
+        return ww[4] * tf.reduce_mean((y_true - y_pred) ** 2)
 
     def nll_null(y_true, y_pred):
         return tf.cast(0., tf.float64)
 
-    return nll if ww[2] > 0. else nll_null
+    return nll if ww[4] > 0. else nll_null
 
 
 def tsne_reg_builder(ww, perplexity, latent_dim):
@@ -92,6 +92,9 @@ def tsne_reg_builder(ww, perplexity, latent_dim):
 
         den = tf.reduce_sum(num, 1) - 1
         repellant = tf.reduce_sum(tf.math.log(den))
+        
+        # tf.print("tsne loss :", tf.reduce_mean((repellant + attraction) / tf.cast(n, tf.float64)))
+        
         return (repellant + attraction) / tf.cast(n, tf.float64)
 
     def null_reg(x, z):
@@ -130,13 +133,14 @@ def cense_reg_builder(ww, kneighs):
 
         info_loss = tf.math.log(z_p) - tf.multiply(tf.math.reciprocal(z_p), 
                                                    tf.reduce_sum(tf.reduce_sum(p * masked_log(p), 1)))
-    
+        
+        # tf.print("cense loss :", tf.reduce_mean(info_loss))
         return info_loss
   
     def null_reg(x):
         return tf.cast(0., tf.float64)
     
-    return null_reg if ww[4] <= 0 else cense_reg 
+    return null_reg if ww[1] <= 0 else cense_reg 
 
 def umap_reg_builder(ww, a, b):
     def umap_reg(x, z):
@@ -196,14 +200,14 @@ def umap_reg_builder(ww, a, b):
         
         cross_entropy = (repellant + attraction) / tf.cast(n, tf.float64)
                         
-        # tf.print("crossentropy :", cross_entropy)
+        # tf.print("umap loss :", cross_entropy)
         
         return tf.reduce_mean(cross_entropy)
     
     def null_reg(x,z):
         return tf.cast(0., tf.float64)
 
-    return null_reg if ww[5] <= 0 else umap_reg
+    return null_reg if ww[2] <= 0 else umap_reg
 
 class Sampling(layers.Layer):
     """Uses (z_mean, z_log_var) to sample z"""
@@ -312,33 +316,34 @@ class Vaevictis(tf.keras.Model):
         z_mean, z_log_var = self.encoder(inputs[0], training=training)
         pos, _ = self.encoder(inputs[1], training=training)
         neg, _ = self.encoder(inputs[2], training=training)
-        
-        pnl = pn_loss_g((z_mean, pos, neg), self.distance, self.margin)
-        # tf.print("pn loss:", pnl)
-        self.add_loss(self.ww[1] * pnl)
+
+        kl_loss = - 0.5 * tf.reduce_mean(
+            z_log_var + tf.math.log(eps_sq) - tf.square(z_mean) - eps_sq * tf.exp(z_log_var))
+        # tf.print("kl loss:", kl_loss)
+        self.add_loss(self.ww[5] * kl_loss)
         
         b = self.tsne_reg(inputs[0], z_mean)
         # tf.print("tsne loss:", b)
         self.add_loss(self.ww[0] * b)
         
-        kl_loss = - 0.5 * tf.reduce_mean(
-            z_log_var + tf.math.log(eps_sq) - tf.square(z_mean) - eps_sq * tf.exp(z_log_var))
-        # tf.print("kl loss:", kl_loss)
-        self.add_loss(self.ww[3] * kl_loss)
-        
-        cen = self.cense_reg(inputs[0]) + 1e-7
-        cenl = self.ww[4] * kl_loss / cen
+        cen = self.cense_reg(inputs[0]) + EPS
+        cenl = self.ww[1] * kl_loss / cen
         # tf.print("cense loss:", cenl)
         self.add_loss(cenl)
         
         umap = self.umap_reg(inputs[0], z_mean)
-        self.add_loss(self.ww[5] * umap)
+        self.add_loss(self.ww[2] * umap)
+        
+        pnl = pn_loss_g((z_mean, pos, neg), self.distance, self.margin)
+        # tf.print("pn loss:", pnl)
+        self.add_loss(self.ww[3] * pnl)
+        
         
         z = self.sampling((z_mean, z_log_var))
         reconstructed = self.decoder(z, training=training)
         # tf.print("rec :", reconstructed)
         # rls=self.nll(inputs[1],reconstructed)
-        # self.add_loss(self.ww[2]*rls)
+        # self.add_loss(self.ww[4]*rls)
         return reconstructed
 
     def get_config(self):
@@ -383,7 +388,7 @@ def dimred(x_train, dim=2, vsplit=0.1, enc_shape=[128, 128, 128], dec_shape=[128
     epochs : integer, maximum number of epochs
     patience : integer, callback patience
     ivis_pretrain : integer, number of epochs to run without tsne regularisation as pretraining
-    ww : list of floats, weights on losses in this order: tsne regularisation, ivis pn loss, reconstruction error, KL divergence
+    ww : list of floats, weights on losses in this order: tsne regularization, cense regularization, umap regularization, ivis pn loss, reconstruction error, KL divergence
     metric : str, "euclidean" or "angular"
     margin : float, ivis margin
     k : integer, number of nearest neighbors for triplet computation
@@ -430,23 +435,55 @@ def dimred(x_train, dim=2, vsplit=0.1, enc_shape=[128, 128, 128], dec_shape=[128
     # eager debugging
     # @tf.function
     # def train_one_step(m1,optimizer,x):
-    #     with tf.GradientTape() as tape:
+    #     with tf.GradientTape(persistent=True) as tape:
     #         tape.watch(m1.trainable_weights)
     #         reconstructed = m1(x)
     #         # Compute reconstruction loss
-    #         loss = nll(x, reconstructed)
+    #         rec_l = nll(x, reconstructed)
     
-    #         loss += sum(m1.losses)  # Add KLD regularization loss
+            
+    #         tsne_l = m1.losses[1]
+    #         cense_l = m1.losses[2]
+    #         umap_l = m1.losses[3]
+    #         ivis_l = m1.losses[4]
+    #         kl_l = m1.losses[0]
+                        
+    #         loss = sum(m1.losses) 
     #         # tf.print("batch_data :", x, summarize=-1)
     #         # tf.print("pred :", reconstructed, summarize=-1)
     
-    #     tf.print("loss :", loss)
+    #     # tf.print("losses :", m1.losses)
     #     # tf.print("weights :", m1.trainable_weights, summarize=-1)
-    #     grads = tape.gradient(loss, m1.trainable_weights)
-    #     # for grad in grads:
-    #     # tf.print("grads :", grads[1], summarize=-1)
-    #     optimizer.apply_gradients(zip(grads, m1.trainable_weights))
-    #     return loss
+    #     # grads = tape.gradient(loss, m1.trainable_weights)
+    #     # optimizer.apply_gradients(zip(grads, m1.trainable_weights))
+    #     # gm = [tf.reduce_mean(tf.math.abs(g)) for g in grads]
+    #     # tf.print("mean of grads :", sum(gm)/len(gm), summarize=-1)
+
+    #     tsne_g = tape.gradient(tsne_l, m1.trainable_weights)
+    #     cense_g = tape.gradient(cense_l, m1.trainable_weights)
+    #     umap_g = tape.gradient(umap_l, m1.trainable_weights)
+    #     ivis_g = tape.gradient(ivis_l, m1.trainable_weights)
+    #     rec_g = tape.gradient(rec_l, m1.trainable_weights)
+    #     kl_g = tape.gradient(kl_l, m1.trainable_weights)
+    #     # tf.print("testg :", cense_g, summarize=-1)
+            
+    #     optimizer.apply_gradients(zip(tsne_g, m1.trainable_weights))
+    #     optimizer.apply_gradients(zip(cense_g, m1.trainable_weights))
+    #     optimizer.apply_gradients(zip(umap_g, m1.trainable_weights))
+    #     optimizer.apply_gradients(zip(ivis_g, m1.trainable_weights))
+    #     optimizer.apply_gradients(zip(rec_g, m1.trainable_weights))
+    #     optimizer.apply_gradients(zip(kl_g, m1.trainable_weights))
+        
+    #     grads = [tsne_g, cense_g, umap_g, ivis_g, rec_g, kl_g]
+    #     processed = []
+    #     for grad in grads:
+    #         means = []
+    #         for g in grad:
+    #             if g is not None:
+    #                 means.append(tf.reduce_mean(tf.math.abs(g)))
+    #         processed.append(sum(means)/len(means))
+
+    #     return loss, processed
     
     
     
@@ -461,9 +498,21 @@ def dimred(x_train, dim=2, vsplit=0.1, enc_shape=[128, 128, 128], dec_shape=[128
     #     anc, pos, neg = formatted_data
     #     for epoch in range(epochs):
     #         print('Start of epoch %d' % (epoch,))
+    #         grads = [0]*6
     #         for  b, x_batch_train in enumerate(anc):
-    #             print('\t Batch', b)
-    #             loss=train_one_step(vae,optimizer,[x_batch_train, pos[b], neg[b]])
+    #             # print('\t Batch', b)
+    #             obj=train_one_step(vae,optimizer,[x_batch_train, pos[b], neg[b]])
+    #             loss = obj[0]
+    #             gs = obj[1]
+    #             grads = [grads[i]+gs[i] for i in range(len(grads))]
+              
+    #         grads = [g/len(anc) for g in grads]    
+    #         tf.print("mean of tsne grads :", grads[1], summarize=-1)
+    #         tf.print("mean of cense grads :", grads[2], summarize=-1)
+    #         tf.print("mean of umap grads :", grads[3], summarize=-1)
+    #         tf.print("mean of ivis grads :", grads[4], summarize=-1)
+    #         tf.print("mean of reconstruction grads :", grads[5], summarize=-1)
+    #         tf.print("mean of KL grads :", grads[0], summarize=-1)
     #     return loss
     
     # loss=train()
@@ -515,7 +564,6 @@ def cluster_sampling(data, n_clusters, n_samples):
     
   return data[sample.astype(int)], memberships, kmeans
 
-
 # data = np.loadtxt("../../MMDResNet/data/source_pIC_orig.csv", delimiter=',')[:50,:]
 # cl = cluster_sampling(data, n_clusters=1, n_samples=12)
 # sampled_data = cl[0]
@@ -546,21 +594,25 @@ def cluster_sampling(data, n_clusters, n_samples):
 # cl = cluster_sampling(data, n_clusters=15, n_samples=500)
 # sampled_data = cl[0]
 # lab = cl[2].predict(sampled_data)
+
+# nbrs = NearestNeighbors(n_neighbors = 16).fit(sampled_data)
+# dst, knn_mat = nbrs.kneighbors(sampled_data)
+
 # vae = dimred(sampled_data,
 #               dim=2,
 #               vsplit=0.1,
 #               enc_shape=[128, 128, 128], 
 #               dec_shape=[128, 128, 128],
 #               perplexity=10., 
-#               batch_size=256, 
-#               epochs=35, 
+#               batch_size=128, 
+#               epochs=15, 
 #               patience=10, 
-#               ww=[0., 0., 5., 1., 0., 10.],
+#               ww=[1., 1., 1., 1., 1., 1.],
 #               metric="euclidean", 
 #               margin=1.,
 #               k=16,
 #               cense_kneighs = 8,
-#               knn=None)
+#               knn=knn_mat)
 
 # layout=vae[0]
 # pred=vae[1]
