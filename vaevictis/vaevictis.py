@@ -7,7 +7,7 @@ from .cense_helper_njit import dist_to_knn as cense_dtk, remove_asym
 from .umap_helper_njit import dist_to_knn as umap_dtk, find_ab_params, smooth_knn_dist, compute_membership_strengths, simplicial_graph_from_dist, euclidean_embedding
 from .ivis_helper import input_compute, pn_loss_g, euclidean_distance, cosine_distance
 from .knn_annoy import build_annoy_index, extract_knn
-from tensorflow.keras.callbacks import EarlyStopping
+from .tensorflow.keras.callbacks import EarlyStopping
 import os
 import json
 import ipdb
@@ -412,7 +412,7 @@ def dimred(x_train, dim=2, vsplit=0.1, enc_shape=[128, 128, 128], dec_shape=[128
         ww1 = ww.copy()
         ww1[0] = -1.
         ##ww1[1]=np.maximum(ww1[1],1.)
-        vae = Vaevictis(x_train.shape[1], enc_shape, dec_shape, dim, perplexity, metric, margin, ww1)
+        vae = Vaevictis(x_train.shape[1], enc_shape, dec_shape, dim, perplexity, metric, margin, cense_kneighs, ww1)
         nll_f = nll_builder(ww1)
         vae.compile(optimizer, loss=nll_f)
         vae.fit(triplets, triplets[0], batch_size=batch_size, epochs=ivis_pretrain, validation_split=vsplit,
@@ -532,7 +532,7 @@ def loadModel(config_file, weights_file):
     config = json.load(open(config_file))
     new_model = Vaevictis(config["original_dim"], config["encoder_shape"],
                           config["decoder_shape"], config["latent_dim"], config["perplexity"],
-                          config["metric"], config["margin"], config["ww"])
+                          config["metric"], config["margin"], config["cense_kneighs"], config["ww"])
 
     optimizer = tf.keras.optimizers.Adam()
     nll_f = nll_builder(config["ww"])
