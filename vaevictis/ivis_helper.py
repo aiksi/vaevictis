@@ -16,7 +16,7 @@ def input_compute(x,k=16,metric="euclidean",knn_matrix=None): #x représente un 
     # knn_matrix = extract_knn(x,"index/ind_"+dt,metric=metric)
   if knn_matrix is None:
     build_annoy_index(x,"ind",metric=metric,build_index_on_disk=True)
-    knn_matrix = extract_knn(x,"ind",metric=metric)
+    knn_matrix = extract_knn(x,"ind",k=k,metric=metric)
 
   positive = np.empty(np.shape(x))
   negative = np.empty(np.shape(x))

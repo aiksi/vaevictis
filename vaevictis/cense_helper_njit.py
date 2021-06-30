@@ -11,9 +11,9 @@ def dist_to_knn(dist) -> np.float64:
     k = dist.shape[0]
     newdist_and_knn = np.zeros((2*k,k))
     
-    for i,d in enumerate(dist):
-        ids = np.argsort(d)
-        newdist_and_knn[i,:] = d[ids]
+    for i in range(k):
+        ids = np.argsort(dist[i,:])
+        newdist_and_knn[i,:] = dist[i,ids]
         newdist_and_knn[k+i,:] = ids
 
     return newdist_and_knn 
