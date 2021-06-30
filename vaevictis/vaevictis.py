@@ -9,12 +9,10 @@ from .ivis_helper import input_compute, pn_loss_g, euclidean_distance, cosine_di
 from tensorflow.keras.callbacks import EarlyStopping
 import os
 import json
-import ipdb
-from datetime import datetime
 
 from sklearn.cluster import KMeans
 from sklearn.neighbors import NearestNeighbors
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
 K.set_floatx('float64')

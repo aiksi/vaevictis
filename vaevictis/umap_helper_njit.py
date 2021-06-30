@@ -1,7 +1,6 @@
 import sys
 import numpy as np
 import numba
-import ipdb
 from numba import jit
 from scipy.optimize import curve_fit
 MAX_VAL = np.log(sys.float_info.max) / 2.0
