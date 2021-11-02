@@ -13,8 +13,11 @@ def dist_to_knn(dist) -> np.float64:
     
     for i in range(k):
         ids = np.argsort(dist[i,:])
-        newdist_and_knn[i,:] = dist[i,ids]
         newdist_and_knn[k+i,:] = ids
+
+        for j in range(len(ids)):
+            r = ids[j]
+            newdist_and_knn[i,j] = dist[i,r]
 
     return newdist_and_knn 
 
