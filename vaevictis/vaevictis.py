@@ -346,7 +346,7 @@ class Vaevictis(tf.keras.Model):
         return {'original_dim': self.original_dim, 'encoder_shape': self.encoder_shape.copy(),
                 'decoder_shape': self.decoder_shape.copy(), 'latent_dim': self.latent_dim,
                 'perplexity': self.perplexity, 'metric': self.metric,
-                'margin': self.margin, 'cense_kneighs': self.kneighs, 'ww': self.ww.copy(), 'name': self.name}
+                'margin': self.margin, 'cense_kneighs': self.kneighs, 'ww': self.ww.copy(), 'grad_clip': self.grad_clip, 'name': self.name}
 
     def save(self, config_file, weights_file):
         json_config = self.get_config()
@@ -368,7 +368,7 @@ class Vaevictis(tf.keras.Model):
 
 def dimred(x_train, dim=2, vsplit=0.1, enc_shape=[128, 128, 128], dec_shape=[128, 128, 128],
            perplexity=10., batch_size=512, epochs=100, patience=0, ivis_pretrain=0, ww=[10., 10., 1., 1., 1., 1.],
-           metric="euclidean", margin=1., k=30, cense_kneighs=16, knn=None,batch_size_predict=524288):
+           metric="euclidean", margin=1., k=30, cense_kneighs=16, knn=None,batch_size_predict=524288, grad_clip=10.0):
     """Wrapper for model build and training
 
     Parameters
@@ -403,7 +403,7 @@ def dimred(x_train, dim=2, vsplit=0.1, enc_shape=[128, 128, 128], dec_shape=[128
     # triplets = [x_train, x_train, x_train]
     # tf.print("triplets :", triplets)
 
-    optimizer = tf.keras.optimizers.Adam()
+    optimizer = tf.keras.optimizers.Adam(clipvalue=grad_clip)
     if ivis_pretrain > 0:
         ww1 = ww.copy()
         ww1[0] = -1.
@@ -418,6 +418,7 @@ def dimred(x_train, dim=2, vsplit=0.1, enc_shape=[128, 128, 128], dec_shape=[128
     vae = Vaevictis(x_train.shape[1], enc_shape, dec_shape, dim, perplexity, metric, margin, cense_kneighs, ww)
     nll_f = nll_builder(ww)
     vae.compile(optimizer, loss=nll_f)
+    vae.grad_clip = grad_clip
 
     es = EarlyStopping(monitor='val_loss', mode='min', restore_best_weights=True, patience=patience)
 
@@ -530,7 +531,7 @@ def loadModel(config_file, weights_file):
                           config["decoder_shape"], config["latent_dim"], config["perplexity"],
                           config["metric"], config["margin"], config["cense_kneighs"], config["ww"])
 
-    optimizer = tf.keras.optimizers.Adam()
+    optimizer = tf.keras.optimizers.Adam(clipvalue=config["grad_clip"])
     nll_f = nll_builder(config["ww"])
     new_model.compile(optimizer, loss=nll_f)
     x = [np.random.rand(10, config["original_dim"]),
